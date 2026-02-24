@@ -1,11 +1,11 @@
-# --- add imports near the top ---
 import base64
 import gzip
 import io
 import json
-from typing import DefaultDict
 from collections import defaultdict
+from typing import Optional
 
+import aiohttp
 from nbt.nbt import NBTFile  # pip install nbt
 
 
