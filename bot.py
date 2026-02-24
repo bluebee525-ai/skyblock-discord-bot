@@ -35,7 +35,7 @@ if not DISCORD_TOKEN:
 # Hypixel endpoints
 HYPIXEL_AUCTIONS_URL = "https://api.hypixel.net/skyblock/auctions"
 HYPIXEL_BAZAAR_URL = "https://api.hypixel.net/skyblock/bazaar"
-HYPIXEL_PROFILES_URL = "https://api.hypixel.net/skyblock/profiles"
+HYPIXEL_PROFILES_URL = "https://api.hypixel.net/v2/skyblock/profiles"
 MOJANG_UUID_URL = "https://api.mojang.com/users/profiles/minecraft/{username}"
 
 START_TIME = time.time()
