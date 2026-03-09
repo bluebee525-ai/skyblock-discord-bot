@@ -5,21 +5,21 @@ import requests
 import aiosqlite
 import time
 
-# ---------- ENVIRONMENT VARIABLES ----------
+# ---------------- ENVIRONMENT VARIABLES ----------------
 TOKEN = os.getenv("DISCORD_TOKEN")
 LTC_ADDRESS = os.getenv("LTC_ADDRESS")
 SOL_ADDRESS = os.getenv("SOL_ADDRESS")
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", 0))  # staff log channel id
-GUILD_ID = int(os.getenv("GUILD_ID", 0))  # your server ID for instant slash commands
+LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", 0))
+GUILD_ID = int(os.getenv("GUILD_ID", 0))  # server ID for instant slash commands
 
 if not TOKEN or not LTC_ADDRESS or not SOL_ADDRESS or LOG_CHANNEL == 0 or GUILD_ID == 0:
     raise ValueError("Please set DISCORD_TOKEN, LTC_ADDRESS, SOL_ADDRESS, LOG_CHANNEL, and GUILD_ID in environment variables!")
 
-# ---------- INTENTS ----------
+# ---------------- INTENTS ----------------
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------- DATABASE ----------
+# ---------------- DATABASE ----------------
 async def init_db():
     async with aiosqlite.connect("invoices.db") as db:
         await db.execute("""
@@ -32,27 +32,35 @@ async def init_db():
             created INTEGER
         )
         """)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS notifications(
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER,
+            wallet TEXT,
+            coin TEXT,
+            last_tx TEXT
+        )
+        """)
         await db.commit()
 
-# ---------- PRICE ----------
+# ---------------- PRICE ----------------
 def get_price(symbol):
     url = f"https://api.coingecko.com/api/v3/simple/price?ids={symbol}&vs_currencies=usd"
     r = requests.get(url).json()
     return r[symbol]["usd"]
 
-# ---------- LTC CHECK ----------
+# ---------------- LTC / SOL TRANSACTIONS ----------------
 def ltc_transactions():
     url = f"https://api.blockcypher.com/v1/ltc/main/addrs/{LTC_ADDRESS}"
     r = requests.get(url).json()
     return r.get("txrefs", [])
 
-# ---------- SOL CHECK ----------
 def sol_transactions():
     url = f"https://public-api.solscan.io/account/transactions?account={SOL_ADDRESS}"
     r = requests.get(url).json()
     return r
 
-# ---------- INVOICE COMMAND ----------
+# ---------------- /INVOICE ----------------
 @bot.tree.command(name="invoice")
 async def invoice(interaction: discord.Interaction, usd: float, coin: str):
     coin = coin.upper()
@@ -81,7 +89,7 @@ async def invoice(interaction: discord.Interaction, usd: float, coin: str):
     embed.set_footer(text="Expires in 30 minutes")
     await interaction.response.send_message(embed=embed)
 
-# ---------- STATUS ----------
+# ---------------- /STATUS ----------------
 @bot.tree.command(name="status")
 async def status(interaction: discord.Interaction, invoice_id: int):
     async with aiosqlite.connect("invoices.db") as db:
@@ -94,23 +102,38 @@ async def status(interaction: discord.Interaction, invoice_id: int):
 
     await interaction.response.send_message("Paid ✅" if row[0] else "Waiting for payment ⏳")
 
-# ---------- PAYMENT WATCHER ----------
+# ---------------- /NOTIFY ----------------
+@bot.tree.command(name="notify")
+async def notify(interaction: discord.Interaction, wallet: str, coin: str):
+    coin = coin.upper()
+    if coin not in ["LTC","SOL"]:
+        await interaction.response.send_message("Coin must be LTC or SOL")
+        return
+
+    async with aiosqlite.connect("invoices.db") as db:
+        await db.execute(
+            "INSERT INTO notifications(user_id, wallet, coin, last_tx) VALUES(?,?,?,?)",
+            (interaction.user.id, wallet, coin, "")
+        )
+        await db.commit()
+
+    await interaction.response.send_message(f"You will now be notified for transactions on {wallet} ({coin}) ✅")
+
+# ---------------- PAYMENT WATCHER ----------------
 @tasks.loop(seconds=30)
 async def watcher():
+    # Invoice check
     ltc = ltc_transactions()
     sol = sol_transactions()
 
     async with aiosqlite.connect("invoices.db") as db:
-        cursor = await db.execute(
-            "SELECT id,user_id,coin,amount,created FROM invoices WHERE paid=0"
-        )
+        # Invoice payments
+        cursor = await db.execute("SELECT id,user_id,coin,amount,created FROM invoices WHERE paid=0")
         invoices = await cursor.fetchall()
 
         for inv in invoices:
             invoice_id, user_id, coin, amount, created = inv
-
-            # Skip expired invoices
-            if time.time() - created > 1800:
+            if time.time() - created > 1800:  # skip expired
                 continue
 
             if coin == "LTC":
@@ -139,19 +162,47 @@ async def watcher():
                         await log.send(f"Invoice {invoice_id} paid\nUser: {user}\nTXID: {txid}")
                     break
 
+        # Notify subscriptions
+        cursor = await db.execute("SELECT id,user_id,wallet,coin,last_tx FROM notifications")
+        notify_subs = await cursor.fetchall()
+
+        for sub in notify_subs:
+            sub_id, user_id, wallet, coin, last_tx = sub
+            user = await bot.fetch_user(user_id)
+            new_txid = None
+
+            if coin == "LTC":
+                url = f"https://api.blockcypher.com/v1/ltc/main/addrs/{wallet}"
+                r = requests.get(url).json()
+                txs = r.get("txrefs", [])
+                for tx in txs:
+                    txid = tx["tx_hash"]
+                    if txid != last_tx:
+                        new_txid = txid
+                        break
+
+            elif coin == "SOL":
+                url = f"https://public-api.solscan.io/account/transactions?account={wallet}"
+                r = requests.get(url).json()
+                if len(r) > 0:
+                    txid = r[0]["txHash"]
+                    if txid != last_tx:
+                        new_txid = txid
+
+            if new_txid:
+                await user.send(f"New {coin} transaction detected for wallet {wallet} ✅\nTXID: {new_txid}")
+                await db.execute("UPDATE notifications SET last_tx=? WHERE id=?", (new_txid, sub_id))
+
         await db.commit()
 
-# ---------- READY ----------
+# ---------------- READY ----------------
 @bot.event
 async def on_ready():
     print("Bot online ✅")
     await init_db()
-
-    # Instant guild slash command sync
     guild = discord.Object(id=GUILD_ID)
     await bot.tree.sync(guild=guild)
     print(f"Slash commands synced to guild {GUILD_ID} ✅")
-
     watcher.start()
 
 bot.run(TOKEN)
