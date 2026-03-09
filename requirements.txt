@@ -1,4 +1,1 @@
-discord.py==2.4.0
-aiohttp
-nbt
-python-dotenv
+pip install discord.py requests aiosqlite
