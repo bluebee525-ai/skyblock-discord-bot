@@ -1,1 +1,3 @@
-pip install discord.py requests aiosqlite
+discord.py
+requests
+aiosqlite
