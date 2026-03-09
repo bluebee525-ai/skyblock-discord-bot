@@ -9,10 +9,11 @@ import time
 TOKEN = os.getenv("DISCORD_TOKEN")
 LTC_ADDRESS = os.getenv("LTC_ADDRESS")
 SOL_ADDRESS = os.getenv("SOL_ADDRESS")
-LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", 0))  # default to 0 if not set
+LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", 0))  # staff log channel id
+GUILD_ID = int(os.getenv("GUILD_ID", 0))  # your server ID for instant slash commands
 
-if not TOKEN or not LTC_ADDRESS or not SOL_ADDRESS or LOG_CHANNEL == 0:
-    raise ValueError("Please set DISCORD_TOKEN, LTC_ADDRESS, SOL_ADDRESS, and LOG_CHANNEL in environment variables!")
+if not TOKEN or not LTC_ADDRESS or not SOL_ADDRESS or LOG_CHANNEL == 0 or GUILD_ID == 0:
+    raise ValueError("Please set DISCORD_TOKEN, LTC_ADDRESS, SOL_ADDRESS, LOG_CHANNEL, and GUILD_ID in environment variables!")
 
 # ---------- INTENTS ----------
 intents = discord.Intents.default()
@@ -145,7 +146,12 @@ async def watcher():
 async def on_ready():
     print("Bot online ✅")
     await init_db()
-    await bot.tree.sync()
+
+    # Instant guild slash command sync
+    guild = discord.Object(id=GUILD_ID)
+    await bot.tree.sync(guild=guild)
+    print(f"Slash commands synced to guild {GUILD_ID} ✅")
+
     watcher.start()
 
 bot.run(TOKEN)
